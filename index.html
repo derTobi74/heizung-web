@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Heizung</title>
+<!-- Sicherheit: Die Seite darf nur mit Blynk, Open-Meteo und zippopotam.us sprechen – Tokens können nirgendwo anders hin -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src https://*.blynk.cloud https://api.open-meteo.com https://api.zippopotam.us; manifest-src 'self'; worker-src 'self'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#0c1015">
+<meta name="color-scheme" content="dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+  :root {
+    --bg: #0c1015; --panel: #11161c; --wall: #1a2129; --line: #2c3742; --ink: #e8edf2; --muted: #93a1b0;
+    --ember: #ff7a3d; --emberd: #3a2218; --cool: #4c96fa; --coold: #17283a; --lamp: #f5c84a; --lampd: #3a3016;
+    --ok: #5cc48d; --bad: #f07a6f; --hum: #40d6c4; --fan: #8cdc6e; --fand: #182c1a;
+    --heatbg: #241412; --coolbg: #0e182c;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font-family: Roboto, Inter, system-ui, sans-serif; user-select: none; overflow: hidden; }
+  body { display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: calc(14px + env(safe-area-inset-top)) 18px 4px; }
+  header .t { font-weight: 800; letter-spacing: .08em; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 10px; }
+  header .t svg { width: 22px; height: 22px; }
+  header .hb { display: flex; gap: 8px; }
+  header button { background: var(--wall); border: 0; color: var(--ink); width: 38px; height: 38px; border-radius: 50%; font-size: 18px; display: flex; align-items: center; justify-content: center; padding: 0; cursor: pointer; }
+  header button svg { width: 18px; height: 18px; }
+  .badge { font-size: 10.5px; font-weight: 800; letter-spacing: .06em; padding: 3px 8px; border-radius: 99px; background: var(--emberd); color: var(--ember); }
+  .badge.err { background: #3a1a18; color: var(--bad); }
+  .badge:empty { display: none; }
+  button { cursor: pointer; font-family: inherit; }
+
+  /* Wetterseite (wie am Display) */
+  .wx-h { font-weight: 700; font-size: 21px; margin-top: 4px; }
+  .wx-now { display: flex; align-items: center; justify-content: center; gap: 18px; margin-top: 6px; }
+  .wx-now .ic { width: 92px; height: 92px; }
+  .wx-now .tt { font-size: 70px; font-weight: 700; line-height: 1; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+  .wx-now .tt sup { font-size: 20px; color: var(--muted); vertical-align: 38px; margin-left: 4px; }
+  .wx-tx { font-weight: 700; font-size: 18px; }
+  .wx-d { font-weight: 700; font-size: 14px; color: var(--muted); display: flex; gap: 18px; }
+  .wx-d .h { color: var(--hum); }
+  .wx-msg { margin: auto; text-align: center; color: var(--muted); font-weight: 700; font-size: 18px; }
+  .wx-msg small { display: block; font-weight: 400; font-size: 13px; margin-top: 6px; }
+  .fc { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; width: 100%; }
+  .sq .fc { position: absolute; left: 24px; right: 24px; bottom: 24px; width: auto; }
+  .fc > div { background: var(--wall); border-radius: 16px; padding: 7px 4px 6px; display: flex; flex-direction: column; align-items: center; }
+  .fc b { font-size: 14px; } .fc .u { font-size: 13px; color: var(--muted); }
+  .fc svg { width: 38px; height: 38px; margin: 1px 0; }
+  .fc .ft { font-size: 20px; font-weight: 700; } .fc .r { font-size: 13px; color: var(--muted); } .fc .r.wet { color: var(--cool); }
+  .rnd .fc { max-width: 380px; margin-top: 14px; }
+
+  /* Breite Bildschirme: alle Displays nebeneinander wie an der Wand */
+  @media (min-width: 820px) {
+    html, body { overflow: auto; }
+    body { min-height: 100%; height: auto; }
+    header { max-width: 1640px; width: 100%; margin: 0 auto; padding: 22px 32px 6px; }
+    header .t { font-size: 15px; }
+    body .pages { flex-wrap: wrap; justify-content: center; align-content: flex-start; gap: 34px 30px; overflow: visible; padding: 18px 24px 40px; max-width: 1640px; width: 100%; margin: 0 auto; scroll-snap-type: none; }
+    body .page { flex: 0 0 380px; padding: 0; }
+    body .dots { display: none; }
+    body .sheet { inset: 0; padding: 0; background: rgba(5, 8, 11, .72); align-items: center; justify-content: center; }
+    .sheet .box { width: 440px; max-height: 92vh; overflow-y: auto; background: var(--bg); border-radius: 24px; padding: 18px 22px; box-shadow: 0 30px 80px #000a; }
+  }
+  .sheet .box { display: flex; flex-direction: column; min-height: 100%; }
+  @media (min-width: 820px) { .sheet .box { min-height: 0; } }
+  .pages { flex: 1; display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; }
+  .pages::-webkit-scrollbar { display: none; }
+  .page { flex: 0 0 100%; scroll-snap-align: center; display: flex; flex-direction: column; align-items: center; padding: 6px 16px 0; }
+  .dots { display: flex; gap: 7px; justify-content: center; padding: 10px 0 4px; }
+  .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--line); display: block; transition: .2s; }
+  .dots i.on { width: 9px; height: 9px; background: var(--acc, var(--ink)); }
+
+  /* rundes Mini-Display */
+  .dial { --s: min(86vw, 340px); position: relative; width: var(--s); height: var(--s); border-radius: 50%; background: var(--panel); flex: none; }
+  .ring { position: absolute; inset: 0; border-radius: 50%;
+          -webkit-mask: radial-gradient(circle, transparent 66.5%, #000 67%, #000 74%, transparent 74.5%);
+                  mask: radial-gradient(circle, transparent 66.5%, #000 67%, #000 74%, transparent 74.5%); }
+  .dial .ring { -webkit-mask: radial-gradient(farthest-side, transparent 89.5%, #000 90%, #000 99%, transparent 99.5%);
+                        mask: radial-gradient(farthest-side, transparent 89.5%, #000 90%, #000 99%, transparent 99.5%); }
+  .tint { position: absolute; inset: 6.5%; border-radius: 50%; }
+  .dot { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; background: var(--ink); box-shadow: 0 0 0 4px var(--panel); }
+  .in { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding-bottom: 4%; }
+  .name { font-weight: 700; font-size: 19px; display: flex; align-items: center; gap: 7px; }
+  .st { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); } .st.on { background: var(--ok); } .st.off { background: var(--bad); }
+  .chip { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 800; letter-spacing: .04em; padding: 5px 16px; border-radius: 99px; border: 0; color: var(--bg); }
+  .chip svg { width: 17px; height: 17px; }
+  .chip.aus { background: var(--wall); color: var(--muted); box-shadow: inset 0 0 0 1.5px var(--line); }
+  .tl { display: flex; align-items: center; gap: 10px; }
+  .temp { font-size: 62px; font-weight: 700; line-height: 1; letter-spacing: -.02em; font-variant-numeric: tabular-nums; position: relative; }
+  .temp sup { font-size: 18px; vertical-align: 30px; margin-left: 3px; }
+  .win { width: 34px; height: 40px; }
+  .must { width: 12px; height: 38px; animation: blink 1.2s steps(2, start) infinite; }
+  @keyframes blink { to { visibility: hidden; } }
+  .sub { font-size: 16px; font-weight: 700; } .sub .h { color: var(--hum); margin-left: 12px; }
+  .fan { display: flex; align-items: center; gap: 12px; background: var(--fand); border-radius: 99px; padding: 4px 6px; color: var(--fan); font-weight: 700; font-size: 16px; }
+  .fan svg { width: 18px; height: 18px; }
+  .sb { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--fan); background: none; color: var(--fan); font-size: 18px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .row { display: flex; align-items: center; gap: 22px; margin-top: 2px; }
+  .bb { width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--line); background: var(--wall); color: var(--ink); font-size: 28px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .pw { width: 44px; height: 44px; border-radius: 50%; border: 0; display: flex; align-items: center; justify-content: center; padding: 0; }
+  .pw svg { width: 22px; height: 22px; }
+  button:active { transform: scale(.93); }
+
+  /* eckige Variante (wie das 1,69"-Display) */
+  .sq .dial { width: min(86vw, 340px); height: calc(min(86vw, 340px) * 1.17); border-radius: 46px; }
+  .sq .dial .ring { border-radius: 46px; padding: 11px;
+      -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor;
+              mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0); }
+  .sq .tint { inset: 11px; border-radius: 36px; }
+  .sq .in { justify-content: flex-start; padding: 26px 18px 0; gap: 8px; }
+  .sq .chip { font-size: 24px; padding: 9px 26px; gap: 12px; margin: 2px 0 2px; }
+  .sq .chip svg { width: 28px; height: 28px; }
+  .sq .row { position: absolute; left: 22px; right: 22px; bottom: 26px; justify-content: space-between; gap: 0; }
+  .sq .bb { width: 96px; height: 62px; border-radius: 18px; font-size: 34px; }
+  .sq .pw { width: 50px; height: 50px; }
+
+  /* Infokarten unter dem Display */
+  .cards { width: 100%; max-width: 380px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
+  .card { background: var(--wall); border-radius: 16px; padding: 10px 14px; }
+  .card .l { font-size: 11.5px; color: var(--muted); }
+  .card .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
+  .card.wide { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
+  .card.wide svg { width: 30px; height: 36px; flex: none; }
+
+  .bulbs { display: grid; grid-template-columns: 90px 90px; gap: 4px 30px; justify-items: center; }
+  .bulb { background: none; border: 0; display: flex; flex-direction: column; align-items: center; color: var(--muted); font-weight: 700; font-size: 14px; padding: 0; }
+  .bulb:nth-child(3) { grid-column: 1 / span 2; }
+  .bulb svg { width: 64px; height: 64px; }
+  .bulb .halo { fill: transparent; } .bulb .rays line { stroke: transparent; stroke-width: 2.2; stroke-linecap: round; }
+  .bulb .glass { fill: none; stroke: var(--muted); stroke-width: 2; } .bulb .base { fill: var(--muted); } .bulb .fil { fill: none; stroke: var(--muted); stroke-width: 1.2; }
+  .bulb.on { color: var(--ink); } .bulb.on .halo { fill: var(--lampd); } .bulb.on .rays line { stroke: var(--lamp); }
+  .bulb.on .glass { fill: var(--lamp); stroke: var(--lamp); } .bulb.on .base { fill: var(--ink); } .bulb.on .fil { stroke: #b88a1a; }
+  .bulbs.two { margin-top: 34px; }
+  .bulb.plug .glass { fill: none; } .bulb.plug .hole { fill: var(--muted); }
+  .bulb.plug.on .glass { fill: var(--lamp); } .bulb.plug.on .hole { fill: var(--lampd); }
+  .count { color: var(--muted); font-size: 14px; }
+
+  /* Einstellungen */
+  .sheet { position: fixed; inset: 0; background: var(--bg); display: none; flex-direction: column; padding: 14px 18px; overflow-y: auto; }
+  .sheet.open { display: flex; }
+  .sheet h2 { font-size: 22px; margin: 6px 0 14px; }
+  .sheet label { display: block; font-size: 12px; color: var(--muted); margin: 14px 0 5px; }
+  .sheet input { width: 100%; background: var(--wall); border: 1.5px solid var(--line); border-radius: 12px; color: var(--ink); padding: 12px; font-size: 15px; }
+  .sheet .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .sheet .grp { background: var(--panel); border-radius: 18px; padding: 4px 14px 14px; margin-bottom: 12px; }
+  .sheet .grp h3 { font-size: 14px; margin: 12px 0 0; color: var(--ink); }
+  .sheet .btns { display: flex; gap: 10px; margin-top: auto; padding-top: 16px; }
+  .sheet .btns button { flex: 1; border: 0; border-radius: 99px; padding: 14px; font-weight: 800; font-size: 15px; }
+  .b-ok { background: var(--ember); color: var(--bg); } .b-no { background: var(--wall); color: var(--muted); }
+  .seg { display: flex; background: var(--wall); border-radius: 12px; padding: 3px; }
+  .seg button { flex: 1; background: none; border: 0; color: var(--muted); padding: 9px; border-radius: 10px; font-weight: 700; }
+  .seg button.on { background: var(--coold); color: var(--cool); }
+  .b-qr { width: 100%; margin-top: 12px; background: var(--wall); color: var(--ink); border: 1.5px solid var(--line); border-radius: 12px; padding: 12px; font-weight: 700; font-size: 15px; }
+  .b-qr:disabled { color: var(--muted); opacity: .6; }
+
+  /* QR-Code zum Übertragen der Zugangsdaten */
+  .qrov { position: fixed; inset: 0; background: rgba(5, 8, 11, .85); display: none; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
+  .qrov.open { display: flex; }
+  .qrbox { background: var(--panel); border-radius: 24px; padding: 18px 22px 20px; width: 100%; max-width: 380px; max-height: 100%; overflow-y: auto; text-align: center; }
+  .qrbox h2 { font-size: 20px; margin: 4px 0 14px; }
+  .qr { background: #fff; border-radius: 16px; padding: 14px; width: min(100%, 300px); margin: 0 auto; }
+  .qr svg { display: block; width: 100%; height: auto; }
+  .qrbox ol { text-align: left; font-size: 14px; line-height: 1.5; padding-left: 22px; margin: 14px 0 6px; }
+  .qrbox .hint { word-break: break-all; font-size: 11.5px; color: var(--muted); }
+  .qrbox .warn { font-size: 12.5px; color: var(--bad); margin: 10px 0 14px; }
+  .qrbox button { width: 100%; border: 0; border-radius: 99px; padding: 13px; font-weight: 800; font-size: 15px; }
+
+  /* Hinweis nach dem Übernehmen */
+  .banner { position: fixed; left: 50%; bottom: calc(26px + env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(92vw, 420px);
+            background: var(--fand); color: var(--fan); border: 1.5px solid #2c5a2e; border-radius: 18px; padding: 12px 16px; font-size: 14px; font-weight: 600;
+            line-height: 1.4; display: none; z-index: 30; box-shadow: 0 16px 40px #0009; }
+  .banner.open { display: block; }
+  .banner b { color: var(--ink); }
+</style>
+</head>
+<body>
+<header>
+  <span class="t"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="6" fill="none" stroke="#2c3742" stroke-width="2.6"/><path d="M3.3 17.5V8A5 5 0 0 1 8 3.3h9.5" fill="none" stroke="#ff7a3d" stroke-width="2.6" stroke-linecap="round"/></svg>HEIZUNG<span class="badge" id="badge"></span></span>
+  <span class="hb">
+    <button id="reload" aria-label="Aktualisieren" title="Aktualisieren"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/><path d="M12.4 1.6v3h-3"/></svg></button>
+    <button id="gear" aria-label="Einstellungen" title="Einstellungen">⚙</button>
+  </span>
+</header>
+<div class="pages" id="pages"></div>
+<div class="dots" id="dots"></div>
+<div style="height:calc(14px + env(safe-area-inset-bottom))"></div>
+
+<div class="sheet" id="sheet"><div class="box">
+  <h2>Einstellungen</h2>
+  <div class="grp">
+    <h3>Blynk-Zugang</h3>
+    <label>Token Oben</label><input id="t-oben" autocomplete="off" spellcheck="false" placeholder="Auth-Token">
+    <label>Token Unten (Wohnzimmer)</label><input id="t-unten" autocomplete="off" spellcheck="false" placeholder="Auth-Token">
+    <label>Token Licht</label><input id="t-licht" autocomplete="off" spellcheck="false" placeholder="Auth-Token">
+    <div class="hint">Die Tokens bleiben nur in diesem Browser gespeichert. Ohne Tokens läuft die App im Demo-Modus.</div>
+  </div>
+  <div class="grp">
+    <h3>Aussehen</h3>
+    <label>Form der Displays</label>
+    <div class="seg" id="seg-d"><button data-d="sq">Eckig</button><button data-d="rnd">Rund</button></div>
+  </div>
+  <div class="grp">
+    <h3>Lüftungsempfehlung</h3>
+    <label>Standort (Postleitzahl)</label><input id="plz" inputmode="numeric" maxlength="5" placeholder="z. B. 10115">
+    <div class="hint" id="plzinfo">–</div>
+  </div>
+  <div class="grp">
+    <h3>Aktualisieren</h3>
+    <label>Werte neu laden alle</label>
+    <div class="seg" id="seg"><button data-s="5">5 s</button><button data-s="10">10 s</button><button data-s="30">30 s</button></div>
+  </div>
+  <div class="grp">
+    <h3>Anderes Gerät einrichten</h3>
+    <div class="hint" style="margin-top:8px">Zeigt einen QR-Code mit den gespeicherten Tokens und der PLZ. Mit der iPhone-Kamera scannen – fertig.</div>
+    <button class="b-qr" id="qrbtn">QR-Code anzeigen</button>
+  </div>
+  <div class="btns"><button class="b-no" id="cancel">Abbrechen</button><button class="b-ok" id="save">Speichern</button></div>
+</div></div>
+
+<div class="qrov" id="qrov"><div class="qrbox">
+  <h2>Mit dem Handy scannen</h2>
+  <div class="qr" id="qr"></div>
+  <ol>
+    <li>iPhone-Kamera auf den Code richten, Link antippen</li>
+    <li>In Safari: <b>Teilen</b> → <b>Zum Home-Bildschirm</b></li>
+  </ol>
+  <div class="hint" id="qrurl"></div>
+  <div class="warn">Der Code enthält deine Zugangsdaten – nicht fotografieren oder weitergeben.</div>
+  <button class="b-ok" id="qrclose">Schließen</button>
+</div></div>
+
+<div class="banner" id="banner"></div>
+<script src="qrcode.js"></script>
+
+<script>
+(() => {
+  const STORE = "heizung-web-v1";
+  const P = { temp: "V3", set: "V4", setDn: "V5", setUp: "V6", power: "V9", fan: "V10", fanDn: "V11", fanUp: "V12", cool: "V13", heat: "V14", mode: "V15", hum: "V17" };
+  // [Schlüssel, Blynk-Pin, Name, Steckdose]
+  const LIGHTS = [["k", "V0", "Küche"], ["m", "V3", "Mitte"], ["t", "V2", "Terasse"], ["s", "V4", "Schuppen", true], ["t2", "V5", "Terasse", true]];
+  const GROUPS = [["Licht unten", ["k", "m", "t"]], ["Außen", ["s", "t2"]]];
+  const DEMO = { oben: { temp: 21, set: 23, power: 1, hum: 68, mode: "Heizen", fan: "2", online: true },
+                 unten: { temp: 22.5, set: 22, power: 1, hum: 38, mode: "Kühlen", fan: "1", online: true } };
+  let cfg = { server: "fra1.blynk.cloud", oben: "", unten: "", licht: "", plz: "", ort: "", lat: null, lon: null, every: 10, design: location.hash === "#rund" ? "rnd" : "sq" };
+  try { Object.assign(cfg, JSON.parse(localStorage.getItem(STORE) || "{}") || {}); } catch (e) {}
+  const save = () => { try { localStorage.setItem(STORE, JSON.stringify(cfg)); } catch (e) {} };
+
+  // Fremde Texte (Blynk, zippopotam, QR-Link) nie roh in HTML einsetzen
+  const esc = v => v == null ? "" : String(v).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+  // Zugangsdaten per QR-Link übertragen: …/#cfg=<base64url(JSON)>
+  const QR_KEYS = { o: "oben", u: "unten", l: "licht", p: "plz", n: "ort", a: "lat", b: "lon" };
+  const b64e = s => btoa(unescape(encodeURIComponent(s))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const b64d = s => decodeURIComponent(escape(atob(s.replace(/-/g, "+").replace(/_/g, "/"))));
+  const standalone = () => navigator.standalone === true || matchMedia("(display-mode: standalone)").matches;
+  let imported = false;
+  try {
+    const m = location.hash.match(/[#&]cfg=([\w-]+)/);
+    if (m) {
+      const j = JSON.parse(b64d(m[1]));
+      for (const [k, key] of Object.entries(QR_KEYS)) if (j[k] != null) cfg[key] = (k === "a" || k === "b") ? (isFinite(+j[k]) ? +j[k] : null) : String(j[k]);
+      save(); imported = true;
+      // In Safari bleibt der Link stehen, damit „Zum Home-Bildschirm“ die Daten mitnimmt; in der installierten App aufräumen
+      if (standalone()) history.replaceState(null, "", location.pathname + location.search);
+    }
+  } catch (e) {}
+
+  const st = { oben: {}, unten: {}, licht: {} };
+  // wie Firmware: Ist-Wetter + Vorschau in 8/16/24 h
+  const WX_N = 4, WX_STEP = 8;
+  const wx = { t: null, rh: null, wind: null, code: -1, day: true, fc: [], ok: false, loading: false };
+  const DEMO_WX = { t: 6.5, rh: 88, wind: 12, code: 2, day: true, ok: true,
+    fc: [{ t: 4, code: 61, rain: 70, day: false, hour: 22 }, { t: -1, code: 0, rain: 5, day: false, hour: 6 }, { t: 0, code: 73, rain: 45, day: true, hour: 14 }] };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const fmt = v => v == null || isNaN(v) ? "–" : (Number.isInteger(+v) ? String(+v) : (+v).toLocaleString("de-DE", { minimumFractionDigits: 1, maximumFractionDigits: 1 }));
+  const isCool = m => /k(ü|ue)hl|cool/i.test(m || ""), isHeat = m => /heiz|heat/i.test(m || "");
+  const absHum = (t, rh) => 6.112 * Math.exp(17.67 * t / (t + 243.5)) * rh * 2.1674 / (273.15 + t);
+  const dew = (t, rh) => { const a = Math.log(rh / 100) + 17.62 * t / (243.12 + t); return 243.12 * a / (17.62 - a); };
+
+  async function api(path, tok, params) {
+    const r = await fetch("https://" + cfg.server + "/external/api/" + path + "?token=" + encodeURIComponent(tok) + (params ? "&" + params : ""), { cache: "no-store" });
+    const t = await r.text(); if (!r.ok) throw new Error(t); return t;
+  }
+  const upd = (tok, p, v) => api("update", tok, p + "=" + encodeURIComponent(v));
+  const press = async (tok, p) => { await upd(tok, p, 1); await sleep(300); await upd(tok, p, 0); };
+
+  async function loadFloor(id) {
+    const tok = cfg[id], s = st[id];
+    if (!tok) { Object.assign(s, DEMO[id], { demo: true }); return; }
+    if (s.pend) return;
+    try {
+      const [on, raw] = await Promise.all([api("isHardwareConnected", tok).then(t => t.trim() === "true").catch(() => null),
+        api("get", tok, [P.temp, P.set, P.power, P.mode, P.hum, P.fan].join("&"))]);
+      const j = JSON.parse(raw);
+      Object.assign(s, { temp: +j[P.temp], set: +j[P.set], power: +j[P.power], hum: +j[P.hum], mode: String(j[P.mode] ?? ""), fan: j[P.fan] != null ? String(j[P.fan]) : null, online: on, err: "", demo: false });
+    } catch (e) { s.err = "keine Verbindung"; }
+  }
+  async function loadLight() {
+    const tok = cfg.licht, s = st.licht;
+    if (!tok) { Object.assign(s, { k: 1, m: 1, t: 0, s: 0, t2: 1, demo: true, online: true }); return; }
+    try {
+      const [on, raw] = await Promise.all([api("isHardwareConnected", tok).then(t => t.trim() === "true").catch(() => null), api("get", tok, LIGHTS.map(l => l[1]).join("&"))]);
+      const j = JSON.parse(raw); LIGHTS.forEach(([k, p]) => s[k] = +j[p]); Object.assign(s, { online: on, demo: false });
+    } catch (e) { s.err = "keine Verbindung"; }
+  }
+  let wxLast = 0;
+  async function loadWeather(force) {
+    if (cfg.lat == null) { if (!cfg.oben) Object.assign(wx, DEMO_WX); return; }
+    if (!force && wx.ok && Date.now() - wxLast < 15 * 60 * 1000) return;
+    wx.loading = !wx.ok;
+    try {
+      const j = await (await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${cfg.lat}&longitude=${cfg.lon}` +
+        `&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,is_day` +
+        `&hourly=temperature_2m,weather_code,precipitation_probability,is_day&forecast_hours=${(WX_N - 1) * WX_STEP + 1}&timezone=auto`, { cache: "no-store" })).json();
+      const c = j.current, h = j.hourly;
+      Object.assign(wx, { t: c.temperature_2m, rh: c.relative_humidity_2m, wind: c.wind_speed_10m, code: c.weather_code, day: c.is_day === 1, ok: true });
+      wx.fc = [];
+      for (let s = 1; s < WX_N; s++) { const n = s * WX_STEP;
+        wx.fc.push({ t: h.temperature_2m[n], code: h.weather_code[n], rain: h.precipitation_probability[n], day: h.is_day[n] === 1, hour: +String(h.time[n]).slice(11, 13) }); }
+      wxLast = Date.now();
+    } catch (e) {}
+    wx.loading = false;
+  }
+
+  // Soll/Lüfter: Tipps sammeln, 1,5 s nach dem letzten Tipp gesammelt senden
+  function bump(id, kind, d) {
+    const s = st[id];
+    if (kind === "set" && !isNaN(s.set)) s.set += d;
+    if (kind === "fan" && /^\d+$/.test(s.fan || "")) s.fan = String(Math.max(0, +s.fan + d));
+    s.pend = s.pend || { set: 0, fan: 0 }; s.pend[kind] += d;
+    clearTimeout(s.pt); render();
+    s.pt = setTimeout(async () => {
+      const p = s.pend; s.pend = null; if (s.demo) return;
+      const tok = cfg[id];
+      for (let i = 0; i < Math.abs(p.set); i++) await press(tok, p.set > 0 ? P.setUp : P.setDn);
+      for (let i = 0; i < Math.abs(p.fan); i++) await press(tok, p.fan > 0 ? P.fanUp : P.fanDn);
+      await sleep(1500); await loadFloor(id); render();
+    }, 1500);
+  }
+  async function act(id, what) {
+    const s = st[id], tok = cfg[id];
+    if (what === "pw") s.power = s.power === 1 ? 0 : 1;
+    if (what === "mode") s.mode = isCool(s.mode) ? "Heizen" : "Kühlen";
+    render(); if (s.demo) return;
+    try { if (what === "pw") await upd(tok, P.power, s.power); else await press(tok, isCool(s.mode) ? P.cool : P.heat); } catch (e) {}
+    await sleep(1500); await loadFloor(id); render();
+  }
+  async function toggleLight(k) {
+    const s = st.licht; s[k] = s[k] === 1 ? 0 : 1; render(); if (s.demo) return;
+    try { await upd(cfg.licht, LIGHTS.find(l => l[0] === k)[1], s[k]); } catch (e) {}
+  }
+
+  const GRAD = { heat: ["#ffd648", "#ff8030", "#ec3448"], cool: ["#48e8e4", "#4c96fa", "#9264f6"], lamp: ["#fff078", "#ffc040", "#ffa828"], off: ["#93a1b0", "#93a1b0", "#93a1b0"] };
+  // rund: 270° ab unten links; eckig: 320° – Lücke nur unten in der Mitte wie am Display
+  const arcStart = () => document.body.classList.contains("sq") ? 200 : 225, arcSpan = () => document.body.classList.contains("sq") ? 320 : 270;
+  const ring = (frac, g) => { const A = arcSpan(), S = arcStart(), d = Math.max(0, Math.min(1, frac)) * A;
+    return `conic-gradient(from ${S}deg, transparent 0 ${d}deg, var(--line) ${d}deg ${A}deg, transparent ${A}deg), conic-gradient(from ${S}deg, ${g[0]} 0deg, ${g[1]} ${A / 2}deg, ${g[2]} ${A}deg, transparent ${A}deg)`; };
+  const dotPos = frac => { const a = (arcStart() - 90 + arcSpan() * Math.max(0, Math.min(1, frac))) * Math.PI / 180;
+    if (!document.body.classList.contains("sq")) return `left:${50 + 47.3 * Math.cos(a)}%;top:${50 + 47.3 * Math.sin(a)}%`;
+    const hx = 46.8, hy = 47.3, c = Math.cos(a), s2 = Math.sin(a), k = Math.min(hx / Math.abs(c || 1e-6), hy / Math.abs(s2 || 1e-6));
+    return `left:${50 + k * c}%;top:${50 + k * s2}%`; };
+  const FLAME = c => `<svg viewBox="0 0 20 20"><path fill="${c}" d="M10 1c1 3 5 5 5 10a5 5 0 0 1-10 0c0-2 1-3.5 2-4.5 0 2 1 3 2 3-.6-3 0-6 1-8.5z"/><path fill="var(--accbg)" d="M10 17a2.2 2.2 0 0 1-2.2-2.2c0-1.4 1.2-2.2 2.2-3.8 1 1.6 2.2 2.4 2.2 3.8A2.2 2.2 0 0 1 10 17z"/></svg>`;
+  const SNOW = c => `<svg viewBox="0 0 20 20" stroke="${c}" stroke-width="1.8" stroke-linecap="round" fill="none">${[0, 60, 120].map(a => `<g transform="rotate(${a} 10 10)"><path d="M10 1v18M7.5 3.5 10 6l2.5-2.5M7.5 16.5 10 14l2.5 2.5"/></g>`).join("")}</svg>`;
+  const WIN = (open, c) => `<svg class="win" viewBox="0 0 34 40" fill="none" stroke="${open ? c : "var(--bad)"}" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round">
+      <rect x="10" y="8" width="14" height="24"/><path d="M10 8 3 5v30l7-3M24 8l7-3v30l-7-3"/>
+      <path d="M12.5 14c2-1.5 3 1.5 4.5 0s2.5 1.5 4.5 0M12.5 20c2-1.5 3 1.5 4.5 0s2.5 1.5 4.5 0M12.5 26c2-1.5 3 1.5 4.5 0s2.5 1.5 4.5 0"/>
+      ${open ? "" : `<path d="M2 38 32 2" stroke="var(--panel)" stroke-width="6"/><path d="M2 38 32 2"/>`}</svg>`;
+  const MUST = `<svg class="must" viewBox="0 0 12 38"><rect x="1.5" y="0" width="9" height="25" rx="4.5" fill="var(--bad)"/><circle cx="6" cy="32.5" r="5" fill="var(--bad)"/></svg>`;
+  const FAN = `<svg viewBox="0 0 16 16"><g fill="currentColor"><circle cx="8" cy="3.2" r="3"/><circle cx="12.2" cy="10.4" r="3"/><circle cx="3.8" cy="10.4" r="3"/></g><circle cx="8" cy="8" r="2.2" fill="var(--fand)"/></svg>`;
+  const PWR = c => `<svg viewBox="0 0 16 16" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round"><path d="M4.6 4.2a5.2 5.2 0 1 0 6.8 0"/><path d="M8 1.8v5.4"/></svg>`;
+  const BULB = `<svg viewBox="0 0 44 44"><g transform="rotate(180 22 21)"><circle class="halo" cx="22" cy="18" r="17"/><g class="rays"><line x1="22" y1="1" x2="22" y2="4.5"/><line x1="7" y1="7" x2="9.6" y2="9.6"/><line x1="37" y1="7" x2="34.4" y2="9.6"/><line x1="2" y1="19" x2="5.5" y2="19"/><line x1="42" y1="19" x2="38.5" y2="19"/></g><path class="glass" d="M22 8a10.5 10.5 0 0 0-6.3 18.9c1.1.9 1.8 2.1 1.8 3.4V31h9v-.7c0-1.3.7-2.5 1.8-3.4A10.5 10.5 0 0 0 22 8z"/><path class="fil" d="M19 30v-6l1.5-2 1.5 2 1.5-2 1.5 2v6"/><rect class="base" x="17.5" y="32" width="9" height="2.6" rx="1"/><rect class="base" x="18.5" y="35.4" width="7" height="2.6" rx="1"/><rect class="base" x="20" y="38.8" width="4" height="2" rx="1"/></g></svg>`;  // hängende Lampe
+  const PLUG = `<svg viewBox="0 0 44 44"><circle class="halo" cx="22" cy="20" r="19"/><circle class="glass" cx="22" cy="20" r="13"/><circle class="hole" cx="16.5" cy="20" r="2.3"/><circle class="hole" cx="27.5" cy="20" r="2.3"/><rect class="hole" x="20.5" y="7.6" width="3" height="3.4" rx="1"/><rect class="hole" x="20.5" y="29" width="3" height="3.4" rx="1"/></svg>`;
+  const stCls = o => o === true ? "on" : (o === false ? "off" : "");
+
+  // Wettersymbole – nachgebaut aus drawWxIcon() der Firmware (Koordinaten um 0/0, s = halbe Breite)
+  const C_LAMP = "#f5c84a", C_CLOUD = "#b2becc", C_STORM = "#6e7a8a", C_MOON = "#d6deee";
+  const cloud = (cx, cy, r, c) => `<g fill="${c}"><circle cx="${cx - r / 2}" cy="${cy + r / 6}" r="${r * 5 / 9}"/><circle cx="${cx + r / 6}" cy="${cy - r / 4}" r="${r * 3 / 4}"/><circle cx="${cx + r * 3 / 4}" cy="${cy + r / 5}" r="${r / 2}"/><rect x="${cx - r}" y="${cy + r / 6}" width="${r * 2 + r / 4}" height="${r / 2}" rx="${r / 4}"/></g>`;
+  const sun = (cx, cy, r) => `<g stroke="${C_LAMP}" stroke-width="${Math.max(2, r / 5)}" stroke-linecap="round">${[...Array(8)].map((_, k) => { const a = k * Math.PI / 4;
+      return `<line x1="${cx + r * 1.35 * Math.cos(a)}" y1="${cy + r * 1.35 * Math.sin(a)}" x2="${cx + r * 1.8 * Math.cos(a)}" y2="${cy + r * 1.8 * Math.sin(a)}"/>`; }).join("")}</g><circle cx="${cx}" cy="${cy}" r="${r}" fill="${C_LAMP}"/>`;
+  const moon = (cx, cy, r, bg) => `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${C_MOON}"/><circle cx="${cx + r * .6}" cy="${cy - r * .4}" r="${r * .85}" fill="${bg}"/>`;
+  const drops = (cx, y, s) => `<g stroke="var(--cool)" stroke-width="${Math.max(2, s / 7)}" stroke-linecap="round">${[-1, 0, 1].map(i => { const x = cx + i * s * 2 / 3; return `<line x1="${x}" y1="${y}" x2="${x - s / 4}" y2="${y + s / 2}"/>`; }).join("")}</g>`;
+  const flake = (cx, cy, r) => `<g stroke="var(--ink)" stroke-width="${Math.max(1.6, r / 3)}" stroke-linecap="round">${[0, 60, 120].map(a => `<line x1="${cx}" y1="${cy - r}" x2="${cx}" y2="${cy + r}" transform="rotate(${a} ${cx} ${cy})"/>`).join("")}</g>`;
+  const bolt = (cx, y, s) => `<g fill="${C_LAMP}"><path d="M${cx + s * .3} ${y}L${cx - s * .4} ${y + s * .6}H${cx + s * .1}Z"/><path d="M${cx - s * .1} ${y + s * .45}H${cx + s * .4}L${cx - s * .3} ${y + s * 1.1}Z"/></g>`;
+  function wxIcon(code, day, bg) {
+    const s = 40; let g;
+    if (code == null || code < 0) g = `<text x="0" y="12" text-anchor="middle" font-size="36" font-weight="700" fill="var(--muted)">?</text>`;
+    else if (code === 0) g = day ? sun(0, 0, s * .5) : moon(0, 0, s * .7, bg);
+    else if (code <= 2) g = (day ? sun(-s * .3, -s * .3, s * .4) : moon(-s * .3, -s * .3, s * .5, bg)) + cloud(s * .1, s * .2, code === 1 ? s * .5 : s * .65, C_CLOUD);
+    else if (code === 3) g = cloud(-s * .1, 0, s * .8, C_CLOUD);
+    else if (code === 45 || code === 48) g = [0, 1, 2].map(i => `<rect x="${-s + (i % 2) * s / 4}" y="${-s / 2 + i * s * .4}" width="${s * 1.75}" height="${s / 5}" rx="${s / 10}" fill="${C_CLOUD}"/>`).join("");
+    else { const storm = code >= 95, y = s * .3;
+      g = cloud(-s * .1, -s * .3, s * .65, storm ? C_STORM : C_CLOUD) +
+        (storm ? bolt(0, y - s / 10, s * .9) : ((code >= 71 && code <= 77) || code === 85 || code === 86) ? flake(-s * .4, y + s * .3, s * .3) + flake(s * .4, y + s * .3, s * .3) : drops(0, y, s * .7)); }
+    return `<svg class="ic" viewBox="-50 -50 100 100">${g}</svg>`;
+  }
+  function wxText(code, day) {
+    if (code === 0) return day ? "Sonnig" : "Klar"; if (code === 1) return "Heiter"; if (code === 2) return "Wolkig"; if (code === 3) return "Bedeckt";
+    if (code === 45 || code === 48) return "Nebel"; if (code >= 51 && code <= 57) return "Nieselregen"; if (code === 65 || code === 67) return "Starkregen";
+    if (code >= 61 && code <= 67) return "Regen"; if (code >= 71 && code <= 77) return "Schnee"; if (code >= 80 && code <= 82) return "Regenschauer";
+    if (code === 85 || code === 86) return "Schneeschauer"; if (code >= 95) return "Gewitter"; return "";
+  }
+  function weatherPage() {
+    const sq = document.body.classList.contains("sq");
+    let body;
+    if (cfg.lat == null && cfg.oben) body = `<div class="wx-msg">Kein Standort<small>in den Einstellungen PLZ eintragen</small></div>`;
+    else if (!wx.ok) body = `<div class="wx-msg">${wx.loading ? "Lade Wetter …" : "Keine Wetterdaten"}</div>`;
+    else {
+      const fc = `<div class="fc">${wx.fc.map((w, i) => `<div><b>in ${(i + 1) * WX_STEP} h</b><span class="u">${w.hour} Uhr</span>${wxIcon(w.code, w.day, "var(--wall)")}
+          <span class="ft">${w.t == null ? "–" : Math.round(w.t) + "°"}</span><span class="r ${w.rain >= 50 ? "wet" : ""}">${w.rain ?? "–"} %</span></div>`).join("")}</div>`;
+      body = `<div class="wx-now">${wxIcon(wx.code, wx.day, "var(--panel)")}<div class="tt">${wx.t == null ? "–" : Math.round(wx.t)}<sup>°C</sup></div></div>
+        <div class="wx-tx">${wxText(wx.code, wx.day)}</div>
+        <div class="wx-d"><span class="h">${wx.rh == null ? "" : fmt(wx.rh) + " %"}</span><span>${wx.wind == null ? "" : Math.round(wx.wind) + " km/h"}</span></div>
+        ${sq ? fc : ""}`;
+      if (!sq) return `<section class="page rnd" data-acc="var(--ink)"><div class="dial"><div class="ring" style="background:${ring(0, GRAD.off)}"></div>
+        <div class="in"><div class="wx-h">${esc(cfg.ort) || "Wetter"}</div>${body}</div></div>${fc}</section>`;
+    }
+    return `<section class="page" data-acc="var(--ink)"><div class="dial"><div class="ring" style="background:${ring(0, GRAD.off)}"></div>
+      <div class="in"><div class="wx-h">${esc(cfg.ort) || "Wetter"}</div>${body}</div></div></section>`;
+  }
+
+  function vent(s) {
+    if (wx.t == null || isNaN(s.temp) || isNaN(s.hum)) return null;
+    const d = absHum(s.temp, s.hum) - absHum(wx.t, wx.rh);
+    s.vent = s.vent == null ? d > 1 : (s.vent ? d >= 0.5 : d > 1);
+    return s.vent;
+  }
+  function floorPage(id) {
+    const s = st[id], on = s.power === 1, cool = isCool(s.mode), heat = isHeat(s.mode);
+    const g = !on ? GRAD.off : (cool ? GRAD.cool : GRAD.heat), tSet = (s.set - 15) / 15;
+    const acc = !on ? "var(--muted)" : g[Math.round(Math.max(0, Math.min(1, tSet)) * 2)];
+    const accD = !on ? "var(--wall)" : (cool ? "var(--coold)" : "var(--emberd)");
+    const bgc = on ? (cool ? "var(--coolbg)" : "var(--heatbg)") : "var(--panel)";
+    const v = vent(s), must = v && s.hum > 65;
+    const chip = !on ? "AUS" : (heat ? "HEIZEN" : (cool ? "KÜHLEN" : (esc(s.mode) || "–")));
+    const dIn = isNaN(s.hum) ? null : dew(s.temp, s.hum), dOut = wx.t == null ? null : dew(wx.t, wx.rh);
+    return `<section class="page" data-acc="${acc}">
+      <div class="dial" style="--accbg:${acc}">
+        <div class="tint" style="background:${bgc}"></div>
+        <div class="ring" style="background:${ring((s.temp - 15) / 15, g)}"></div>
+        ${isNaN(s.set) ? "" : `<div class="dot" style="${dotPos(tSet)}"></div>`}
+        <div class="in">
+          <div class="name"><span class="st ${stCls(s.online)}"></span>${id === "oben" ? "Oben" : "Unten"}</div>
+          <button class="chip ${on ? "" : "aus"}" style="${on ? "background:" + acc : ""}" data-a="${id}:mode">${on && heat ? FLAME("#11161c") : ""}${on && cool ? SNOW("#11161c") : ""}${chip}</button>
+          <div class="tl"><div class="temp">${fmt(s.temp)}<sup style="color:${acc}">°C</sup></div>${v == null ? "" : WIN(v, "var(--ok)")}${must ? MUST : ""}</div>
+          <div class="sub"><span style="color:${acc}">Soll ${fmt(s.set)}°</span><span class="h">${fmt(s.hum)} %</span></div>
+          <div class="fan"><button class="sb" data-f="${id}:-1">−</button>${FAN}<span>${esc(s.fan) || "–"}</span><button class="sb" data-f="${id}:1">+</button></div>
+          <div class="row">
+            <button class="bb" style="border-color:${acc};background:${accD}" data-s="${id}:-1">−</button>
+            <button class="pw" style="background:${on ? acc : "var(--wall)"}" data-a="${id}:pw">${PWR(on ? "#11161c" : "#93a1b0")}</button>
+            <button class="bb" style="border-color:${acc};background:${accD}" data-s="${id}:1">+</button>
+          </div>
+        </div>
+      </div>
+      <div class="cards">
+        <div class="card"><div class="l">Taupunkt innen</div><div class="v">${dIn == null ? "–" : fmt(Math.round(dIn * 10) / 10) + " °C"}</div></div>
+        <div class="card"><div class="l">Außen${cfg.ort ? " · " + esc(cfg.ort) : ""}</div><div class="v">${wx.t == null ? "–" : fmt(wx.t) + " °C · " + Math.round(wx.rh) + " %"}</div></div>
+        <div class="card wide">${v == null ? "" : WIN(v, "var(--ok)")}<div><div class="v" style="font-size:16px;color:${v ? (must ? "var(--bad)" : "var(--ok)") : "var(--muted)"}">${v == null ? "Standort in den Einstellungen eintragen" : (must ? "Jetzt unbedingt lüften" : (v ? "Lüften lohnt sich" : "Fenster besser zu lassen"))}</div>
+          <div class="l">${v == null ? "für die Lüftungsempfehlung" : "Taupunkt außen " + fmt(Math.round(dOut * 10) / 10) + " °C" + (must ? " · Feuchte über 65 %" : "")}</div></div></div>
+      </div>
+    </section>`;
+  }
+  function lightPage([title, keys]) {
+    const s = st.licht, items = LIGHTS.filter(l => keys.includes(l[0])), n = items.filter(l => s[l[0]] === 1).length;
+    return `<section class="page" data-acc="var(--lamp)">
+      <div class="dial"><div class="ring" style="background:${ring(n / items.length, GRAD.lamp)}"></div>
+        <div class="in"><div class="name" style="color:var(--lamp)"><span class="st ${stCls(s.online)}"></span>${title}</div>
+          <div class="count">${n ? n + " an" : "alles aus"}</div>
+          <div class="bulbs${items.length === 2 ? " two" : ""}">${items.map(([k, , nm, plug]) => `<button class="bulb ${plug ? "plug " : ""}${s[k] === 1 ? "on" : ""}" data-l="${k}">${plug ? PLUG : BULB}${nm}</button>`).join("")}</div></div></div>
+    </section>`;
+  }
+  const pagesEl = document.getElementById("pages"), dotsEl = document.getElementById("dots");
+  const applyDesign = () => document.body.classList.toggle("sq", cfg.design !== "rnd");   // Standard: eckiges Design
+  applyDesign();
+  let cur = 0;
+  const badgeEl = document.getElementById("badge");
+  function render() {
+    const x = pagesEl.scrollLeft;
+    pagesEl.innerHTML = floorPage("oben") + floorPage("unten") + GROUPS.map(lightPage).join("") + weatherPage();
+    pagesEl.scrollLeft = x; dots();
+    const err = [st.oben, st.unten, st.licht].some(s => s.err);
+    badgeEl.textContent = err ? "KEINE VERBINDUNG" : (!cfg.oben && !cfg.unten && !cfg.licht ? "DEMO" : "");
+    badgeEl.classList.toggle("err", err);
+  }
+  function dots() {
+    const pg = pagesEl.children; cur = Math.round(pagesEl.scrollLeft / pagesEl.clientWidth);
+    const acc = pg[cur] ? pg[cur].dataset.acc : "";
+    dotsEl.innerHTML = [...pg].map((_, i) => `<i class="${i === cur ? "on" : ""}" style="${i === cur ? "--acc:" + acc : ""}"></i>`).join("");
+  }
+  pagesEl.addEventListener("scroll", () => dots(), { passive: true });
+  document.addEventListener("click", e => {
+    const a = e.target.closest("[data-a]"); if (a) { const [id, w] = a.dataset.a.split(":"); act(id, w); return; }
+    const sb = e.target.closest("[data-s]"); if (sb) { const [id, d] = sb.dataset.s.split(":"); bump(id, "set", +d); return; }
+    const f = e.target.closest("[data-f]"); if (f) { const [id, d] = f.dataset.f.split(":"); bump(id, "fan", +d); return; }
+    const l = e.target.closest("[data-l]"); if (l) toggleLight(l.dataset.l);
+  });
+
+  // Einstellungen
+  const sheet = document.getElementById("sheet"), $ = id => document.getElementById(id);
+  const segSel = v => [...$("seg").children].forEach(b => b.classList.toggle("on", +b.dataset.s === v));
+  $("seg").onclick = e => { const b = e.target.closest("button"); if (b) segSel(+b.dataset.s); };
+  const dSel = v => [...$("seg-d").children].forEach(b => b.classList.toggle("on", b.dataset.d === v));
+  $("seg-d").onclick = e => { const b = e.target.closest("button"); if (b) dSel(b.dataset.d); };
+  $("reload").onclick = () => { loadWeather(true); refresh(); };
+  sheet.addEventListener("click", e => { if (e.target === sheet) sheet.classList.remove("open"); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") sheet.classList.remove("open"); });
+  $("gear").onclick = () => { dSel(cfg.design); $("t-oben").value = cfg.oben; $("t-unten").value = cfg.unten; $("t-licht").value = cfg.licht; $("plz").value = cfg.plz;
+    $("plzinfo").textContent = cfg.ort ? "Gefunden: " + cfg.ort : "Für die Wetterdaten der Lüftungsempfehlung"; segSel(cfg.every); sheet.classList.add("open"); };
+  $("cancel").onclick = () => sheet.classList.remove("open");
+  $("save").onclick = async () => {
+    cfg.oben = $("t-oben").value.trim(); cfg.unten = $("t-unten").value.trim(); cfg.licht = $("t-licht").value.trim();
+    const every = [...$("seg").children].find(b => b.classList.contains("on")); if (every) cfg.every = +every.dataset.s;
+    const dz = [...$("seg-d").children].find(b => b.classList.contains("on")); if (dz) cfg.design = dz.dataset.d;
+    applyDesign();
+    const plz = $("plz").value.trim();
+    if (plz !== cfg.plz) {
+      cfg.plz = plz; cfg.lat = cfg.lon = null; cfg.ort = "";
+      try { const j = await (await fetch("https://api.zippopotam.us/de/" + plz)).json(); const p = j.places[0];
+            cfg.lat = +p.latitude; cfg.lon = +p.longitude; cfg.ort = p["place name"]; } catch (e) { $("plzinfo").textContent = "PLZ nicht gefunden"; }
+    }
+    save(); sheet.classList.remove("open"); await loadWeather(true); refresh(); restart();
+  };
+
+  async function refresh() { await Promise.all([loadFloor("oben"), loadFloor("unten"), loadLight(), loadWeather()]); render(); }
+  let timer; const restart = () => { clearInterval(timer); timer = setInterval(() => { if (!document.hidden && !sheet.classList.contains("open")) refresh(); }, cfg.every * 1000); };
+  // QR-Code anzeigen (läuft die App lokal als Datei, zeigt der Link auf die öffentliche https-Seite)
+  const HOME_URL = "https://dertobi74.github.io/heizung-web/";
+  const hasTok = () => !!(cfg.oben || cfg.unten || cfg.licht);
+  $("qrbtn").onclick = () => {
+    if (!hasTok()) return;
+    const base = /^https?:$/.test(location.protocol) ? location.origin + location.pathname : HOME_URL;
+    const d = {}; for (const [k, key] of Object.entries(QR_KEYS)) if (cfg[key] !== "" && cfg[key] != null) d[k] = cfg[key];
+    const url = base + "#cfg=" + b64e(JSON.stringify(d));
+    const q = qrcode(0, "M"); q.addData(url); q.make();
+    $("qr").innerHTML = q.createSvgTag({ cellSize: 4, margin: 0, scalable: true });
+    $("qrurl").textContent = "Öffnet " + base;
+    $("qrov").classList.add("open");
+  };
+  const qrClose = () => { $("qrov").classList.remove("open"); $("qr").innerHTML = ""; };
+  $("qrclose").onclick = qrClose;
+  $("qrov").addEventListener("click", e => { if (e.target === $("qrov")) qrClose(); });
+  document.addEventListener("keydown", e => { if (e.key === "Escape") qrClose(); });
+  const gearOpen = $("gear").onclick;
+  $("gear").onclick = () => { gearOpen(); $("qrbtn").disabled = !hasTok(); $("qrbtn").textContent = hasTok() ? "QR-Code anzeigen" : "Erst Tokens eintragen und speichern"; };
+
+  if (imported) {
+    const b = $("banner");
+    b.innerHTML = standalone() ? "✓ Zugangsdaten übernommen." :
+      (/iPhone|iPad|iPod/.test(navigator.userAgent) ? "✓ Zugangsdaten übernommen.<br>Jetzt unten auf <b>Teilen</b> → <b>Zum Home-Bildschirm</b> tippen." : "✓ Zugangsdaten übernommen.");
+    b.classList.add("open"); setTimeout(() => b.classList.remove("open"), 12000);
+    b.onclick = () => b.classList.remove("open");
+  }
+
+  render(); refresh(); restart();
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
+  if ("serviceWorker" in navigator && location.protocol !== "file:") navigator.serviceWorker.register("sw.js").catch(() => {});
+})();
+</script>
+</body>
+</html>
