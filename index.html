@@ -290,23 +290,35 @@
   const upd = (tok, p, v) => api("update", tok, p + "=" + encodeURIComponent(v));
   const press = async (tok, p) => { await upd(tok, p, 1); await sleep(300); await upd(tok, p, 0); };
 
+  // Nach einem Tipp zeigt die App den neuen Wert sofort. Blynk/Heizung melden ihn erst etwas später zurück –
+  // so lange werden geladene Werte ignoriert, damit die Anzeige nicht kurz auf den alten Wert zurückspringt.
+  const HOLD_MS = 4000;
+  const busy = s => s.pend || Date.now() < (s.hold || 0);
+  const touch = s => { s.ver = (s.ver || 0) + 1; s.hold = Date.now() + HOLD_MS; };
+  const reloadLater = (fn, s) => { clearTimeout(s.rt); s.rt = setTimeout(async () => { await fn(); render(); }, HOLD_MS + 100); };
+
   async function loadFloor(id) {
     const tok = cfg[id], s = st[id];
-    if (!tok) { Object.assign(s, DEMO[id], { demo: true }); return; }
-    if (s.pend) return;
+    if (!tok) { if (!s.demo) Object.assign(s, DEMO[id], { demo: true }); return; }
+    if (busy(s)) return;
+    const v = s.ver;
     try {
       const [on, raw] = await Promise.all([api("isHardwareConnected", tok).then(t => t.trim() === "true").catch(() => null),
         api("get", tok, [P.temp, P.set, P.power, P.mode, P.hum, P.fan].join("&"))]);
+      if (s.ver !== v || busy(s)) return;           // während der Abfrage wurde getippt → Ergebnis ist veraltet
       const j = JSON.parse(raw);
       Object.assign(s, { temp: +j[P.temp], set: +j[P.set], power: +j[P.power], hum: +j[P.hum], mode: String(j[P.mode] ?? ""), fan: j[P.fan] != null ? String(j[P.fan]) : null, online: on, err: "", demo: false });
     } catch (e) { s.err = "keine Verbindung"; }
   }
   async function loadLight() {
     const tok = cfg.licht, s = st.licht;
-    if (!tok) { Object.assign(s, { k: 1, m: 1, t: 0, s: 0, t2: 1, demo: true, online: true }); return; }
+    if (!tok) { if (!s.demo) Object.assign(s, { k: 1, m: 1, t: 0, s: 0, t2: 1, demo: true, online: true }); return; }
+    if (busy(s)) return;
+    const v = s.ver;
     try {
       const [on, raw] = await Promise.all([api("isHardwareConnected", tok).then(t => t.trim() === "true").catch(() => null), api("get", tok, LIGHTS.map(l => l[1]).join("&"))]);
-      const j = JSON.parse(raw); LIGHTS.forEach(([k, p]) => s[k] = +j[p]); Object.assign(s, { online: on, demo: false });
+      if (s.ver !== v || busy(s)) return;
+      const j = JSON.parse(raw); LIGHTS.forEach(([k, p]) => s[k] = +j[p]); Object.assign(s, { online: on, demo: false, err: "" });
     } catch (e) { s.err = "keine Verbindung"; }
   }
   let wxLast = 0;
@@ -334,26 +346,29 @@
     if (kind === "set" && !isNaN(s.set)) s.set += d;
     if (kind === "fan" && /^\d+$/.test(s.fan || "")) s.fan = String(Math.max(0, +s.fan + d));
     s.pend = s.pend || { set: 0, fan: 0 }; s.pend[kind] += d;
-    clearTimeout(s.pt); render();
+    touch(s); clearTimeout(s.pt); render();
     s.pt = setTimeout(async () => {
-      const p = s.pend; s.pend = null; if (s.demo) return;
+      const p = s.pend; if (s.demo) { s.pend = null; return; }
       const tok = cfg[id];
-      for (let i = 0; i < Math.abs(p.set); i++) await press(tok, p.set > 0 ? P.setUp : P.setDn);
-      for (let i = 0; i < Math.abs(p.fan); i++) await press(tok, p.fan > 0 ? P.fanUp : P.fanDn);
-      await sleep(1500); await loadFloor(id); render();
+      try {
+        for (let i = 0; i < Math.abs(p.set); i++) await press(tok, p.set > 0 ? P.setUp : P.setDn);
+        for (let i = 0; i < Math.abs(p.fan); i++) await press(tok, p.fan > 0 ? P.fanUp : P.fanDn);
+      } catch (e) {}
+      s.pend = null; touch(s); reloadLater(() => loadFloor(id), s);
     }, 1500);
   }
   async function act(id, what) {
     const s = st[id], tok = cfg[id];
     if (what === "pw") s.power = s.power === 1 ? 0 : 1;
     if (what === "mode") s.mode = isCool(s.mode) ? "Heizen" : "Kühlen";
-    render(); if (s.demo) return;
+    touch(s); render(); if (s.demo) return;
     try { if (what === "pw") await upd(tok, P.power, s.power); else await press(tok, isCool(s.mode) ? P.cool : P.heat); } catch (e) {}
-    await sleep(1500); await loadFloor(id); render();
+    touch(s); reloadLater(() => loadFloor(id), s);
   }
   async function toggleLight(k) {
-    const s = st.licht; s[k] = s[k] === 1 ? 0 : 1; render(); if (s.demo) return;
+    const s = st.licht; s[k] = s[k] === 1 ? 0 : 1; touch(s); render(); if (s.demo) return;
     try { await upd(cfg.licht, LIGHTS.find(l => l[0] === k)[1], s[k]); } catch (e) {}
+    touch(s); reloadLater(loadLight, s);
   }
 
   const GRAD = { heat: ["#ffd648", "#ff8030", "#ec3448"], cool: ["#48e8e4", "#4c96fa", "#9264f6"], lamp: ["#fff078", "#ffc040", "#ffa828"], off: ["#93a1b0", "#93a1b0", "#93a1b0"] };
@@ -479,10 +494,12 @@
   applyDesign();
   let cur = 0;
   const badgeEl = document.getElementById("badge");
+  let lastHtml = "";
   function render() {
-    const x = pagesEl.scrollLeft;
-    pagesEl.innerHTML = floorPage("oben") + floorPage("unten") + GROUPS.map(lightPage).join("") + weatherPage();
-    pagesEl.scrollLeft = x; dots();
+    // Nur neu aufbauen, wenn sich etwas geändert hat – sonst gehen Tipps verloren, die genau beim Neuaufbau kommen
+    const h = floorPage("oben") + floorPage("unten") + GROUPS.map(lightPage).join("") + weatherPage();
+    if (h !== lastHtml) { const x = pagesEl.scrollLeft; pagesEl.innerHTML = h; lastHtml = h; pagesEl.scrollLeft = x; }
+    dots();
     const err = [st.oben, st.unten, st.licht].some(s => s.err);
     badgeEl.textContent = err ? "KEINE VERBINDUNG" : (!cfg.oben && !cfg.unten && !cfg.licht ? "DEMO" : "");
     badgeEl.classList.toggle("err", err);
