@@ -127,6 +127,17 @@
   .card .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
   .card.wide { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
   .card.wide svg { width: 30px; height: 36px; flex: none; }
+  /* Klima-Optionen (ab Klima_ESP 2.0): Modus-Reihe + Schalter */
+  .card.opts { grid-column: 1 / -1; display: block; padding: 12px 12px 14px; }
+  .opts .modes { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin: 8px 0 10px; }
+  .opts .modes button { border: 1.5px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 12px; padding: 7px 0 5px; font: inherit; font-size: 11px; font-weight: 700; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
+  .opts .modes button svg { width: 20px; height: 20px; }
+  .opts .modes button.on { background: var(--acc); border-color: var(--acc); color: #11161c; }
+  .opts .tg { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .opts .tg button { border: 1.5px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 99px; padding: 7px 0; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+  .opts .tg button.on { background: var(--acc); border-color: var(--acc); color: #11161c; }
+  .chip.ok { background: var(--ok) !important; color: #11161c; box-shadow: none; }
+  .chip.bad { background: var(--bad) !important; color: #11161c; box-shadow: none; }
 
   .bulbs { display: grid; grid-template-columns: 90px 90px; gap: 4px 30px; justify-items: center; }
   .bulb { background: none; border: 0; display: flex; flex-direction: column; align-items: center; color: var(--muted); font-weight: 700; font-size: 14px; padding: 0; }
@@ -241,12 +252,18 @@
 <script>
 (() => {
   const STORE = "heizung-web-v1";
-  const P = { temp: "V3", set: "V4", setDn: "V5", setUp: "V6", power: "V9", fan: "V10", fanDn: "V11", fanUp: "V12", cool: "V13", heat: "V14", mode: "V15", hum: "V17" };
+  const P = { temp: "V3", set: "V4", setDn: "V5", setUp: "V6", power: "V9", fan: "V10", fanDn: "V11", fanUp: "V12", cool: "V13", heat: "V14", mode: "V15", hum: "V17",
+              mode5: "V20", ack: "V26", fanN: "V8" };
+  const FAN_LBL = ["Auto", "1", "2", "3", "Turbo"];      // V8: 0 Auto, 1..3, 4 Turbo – Beschriftung macht die App selbst
+  // Klima_ESP 2.0: Modi (V20) und Optionen V21..V25 (Anzeige = V25 "Anzeige aus", daher umgekehrt)
+  const MODES = ["Auto", "Kühlen", "Trocknen", "Lüften", "Heizen"];
+  const OPTS = [["V21", "Swing"], ["V22", "Turbo"], ["V23", "Leise"], ["V24", "Schlaf"], ["V25", "Anzeige", true]];
+  const optOn = (s, i) => OPTS[i][2] ? (s.opt || [])[i] !== 1 : (s.opt || [])[i] === 1;
   // [Schlüssel, Blynk-Pin, Name, Steckdose]
   const LIGHTS = [["k", "V0", "Küche"], ["m", "V3", "Mitte"], ["t", "V2", "Terasse"], ["s", "V4", "Schuppen", true], ["t2", "V5", "Terasse", true]];
   const GROUPS = [["Licht unten", ["k", "m", "t"]], ["Außen", ["s", "t2"]]];
-  const DEMO = { oben: { temp: 21, set: 23, power: 1, hum: 68, mode: "Heizen", fan: "2", online: true },
-                 unten: { temp: 22.5, set: 22, power: 1, hum: 38, mode: "Kühlen", fan: "1", online: true } };
+  const DEMO = { oben: { temp: 21, set: 23, power: 1, hum: 68, mode: "Heizen", fan: "2", fanN: 2, online: true, opt: [1, 0, 1, 0, 0], ack: 17 },
+                 unten: { temp: 22.5, set: 22, power: 1, hum: 38, mode: "Kühlen", fan: "1", fanN: 1, online: true, opt: [0, 1, 0, 0, 1], ack: 4711 } };
   let cfg = { server: "fra1.blynk.cloud", oben: "", unten: "", licht: "", plz: "", ort: "", lat: null, lon: null, every: 10, design: location.hash === "#rund" ? "rnd" : "sq" };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem(STORE) || "{}") || {}); } catch (e) {}
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(cfg)); } catch (e) {} };
@@ -297,17 +314,52 @@
   const touch = s => { s.ver = (s.ver || 0) + 1; s.hold = Date.now() + HOLD_MS; };
   const reloadLater = (fn, s) => { clearTimeout(s.rt); s.rt = setTimeout(async () => { await fn(); render(); }, HOLD_MS + 100); };
 
+  // Quittung: der Klima-ESP zählt V26 nach jedem IR-Befehl hoch. Bis dahin "sendet …", dann "GESENDET" oder nach 8 s "FEHLER".
+  function ackShow(s, a, ms) { s.ackSt = a; clearTimeout(s.at); if (ms) s.at = setTimeout(() => { s.ackSt = 0; render(); }, ms); render(); }
+  async function expectAck(id, ok) {
+    const s = st[id];
+    if (!ok) { ackShow(s, 3, 5000); return; }        // schon das Senden an Blynk ging schief
+    if (s.demo) { ackShow(s, 1); setTimeout(() => ackShow(s, 2, 2500), 900); return; }
+    if (s.ack == null) return;                        // ESP mit alter Software: keine Quittung
+    const ref = s.ack, until = Date.now() + 8000; ackShow(s, 1);
+    while (Date.now() < until) {
+      await sleep(1200);
+      try { const a = +(await api("get", cfg[id], P.ack)); if (!isNaN(a) && a !== ref) { s.ack = a; ackShow(s, 2, 2500); return; } } catch (e) {}
+    }
+    ackShow(s, 3, 5000);
+  }
+  async function sendOpt(id, pin, val) {
+    const s = st[id]; touch(s); render(); if (s.demo) { expectAck(id, true); return; }
+    let ok = true; try { await upd(cfg[id], pin, val); } catch (e) { ok = false; }
+    touch(s); expectAck(id, ok); reloadLater(() => loadFloor(id), s);
+  }
+  function setMode(id, i) { st[id].mode = MODES[i]; sendOpt(id, P.mode5, i); }
+  function toggleOpt(id, i) {
+    const s = st[id]; s.opt = s.opt || [null, null, null, null, null];
+    const want = !optOn(s, i), v = OPTS[i][2] ? (want ? 0 : 1) : (want ? 1 : 0);
+    s.opt[i] = v; if (want && i === 2) s.opt[1] = 0;
+    if (i === 1) {                                    // Turbo = Lüfterstufe 4; aus: zurück zur vorigen Stufe (wie der ESP)
+      if (want) { if (s.fanN != null && s.fanN < 4) s.fanPrev = s.fanN; s.fanN = 4; s.opt[2] = 0; }
+      else s.fanN = s.fanPrev ?? 0;
+      s.fan = FAN_LBL[s.fanN];
+    }   // Turbo und Leise schließen sich aus
+    sendOpt(id, OPTS[i][0], v);
+  }
+
   async function loadFloor(id) {
     const tok = cfg[id], s = st[id];
     if (!tok) { if (!s.demo) Object.assign(s, DEMO[id], { demo: true }); return; }
     if (busy(s)) return;
     const v = s.ver;
     try {
-      const [on, raw] = await Promise.all([api("isHardwareConnected", tok).then(t => t.trim() === "true").catch(() => null),
-        api("get", tok, [P.temp, P.set, P.power, P.mode, P.hum, P.fan].join("&"))]);
+      const [on, raw, raw2] = await Promise.all([api("isHardwareConnected", tok).then(t => t.trim() === "true").catch(() => null),
+        api("get", tok, [P.temp, P.set, P.power, P.mode, P.hum, P.fan, P.fanN].join("&")),
+        api("get", tok, [...OPTS.map(o => o[0]), P.ack].join("&")).catch(() => null)]);   // neue Pins: ein Fehler stört den Rest nicht
       if (s.ver !== v || busy(s)) return;           // während der Abfrage wurde getippt → Ergebnis ist veraltet
       const j = JSON.parse(raw);
       Object.assign(s, { temp: +j[P.temp], set: +j[P.set], power: +j[P.power], hum: +j[P.hum], mode: String(j[P.mode] ?? ""), fan: j[P.fan] != null ? String(j[P.fan]) : null, online: on, err: "", demo: false });
+      if (/^[0-4]$/.test(String(j[P.fanN] ?? ""))) { s.fanN = +j[P.fanN]; s.fan = FAN_LBL[s.fanN]; }
+      if (raw2) { const k = JSON.parse(raw2); s.opt = OPTS.map(o => k[o[0]] == null ? null : +k[o[0]]); if (k[P.ack] != null && k[P.ack] !== "") s.ack = +k[P.ack]; }
     } catch (e) { s.err = "keine Verbindung"; }
   }
   async function loadLight() {
@@ -344,26 +396,29 @@
   function bump(id, kind, d) {
     const s = st[id];
     if (kind === "set" && !isNaN(s.set)) s.set += d;
-    if (kind === "fan" && /^\d+$/.test(s.fan || "")) s.fan = String(Math.max(0, +s.fan + d));
+    if (kind === "fan") { const n = Math.max(0, Math.min(4, (s.fanN ?? 0) + d)); if (n === 4 && (s.fanN ?? 0) < 4) s.fanPrev = s.fanN ?? 0; s.fanN = n; s.fan = FAN_LBL[n];
+      s.opt = s.opt || [null, null, null, null, null]; s.opt[1] = s.fanN === 4 ? 1 : 0; if (s.fanN === 4) s.opt[2] = 0; }
     s.pend = s.pend || { set: 0, fan: 0 }; s.pend[kind] += d;
     touch(s); clearTimeout(s.pt); render();
     s.pt = setTimeout(async () => {
-      const p = s.pend; if (s.demo) { s.pend = null; return; }
+      const p = s.pend; if (s.demo) { s.pend = null; expectAck(id, true); return; }
       const tok = cfg[id];
+      let ok = true;
       try {
         for (let i = 0; i < Math.abs(p.set); i++) await press(tok, p.set > 0 ? P.setUp : P.setDn);
-        for (let i = 0; i < Math.abs(p.fan); i++) await press(tok, p.fan > 0 ? P.fanUp : P.fanDn);
-      } catch (e) {}
-      s.pend = null; touch(s); reloadLater(() => loadFloor(id), s);
+        if (p.fan) await upd(tok, P.fanN, s.fanN);    // Lüfter: neue Stufe direkt setzen
+      } catch (e) { ok = false; }
+      s.pend = null; touch(s); expectAck(id, ok); reloadLater(() => loadFloor(id), s);
     }, 1500);
   }
   async function act(id, what) {
     const s = st[id], tok = cfg[id];
     if (what === "pw") s.power = s.power === 1 ? 0 : 1;
     if (what === "mode") s.mode = isCool(s.mode) ? "Heizen" : "Kühlen";
-    touch(s); render(); if (s.demo) return;
-    try { if (what === "pw") await upd(tok, P.power, s.power); else await press(tok, isCool(s.mode) ? P.cool : P.heat); } catch (e) {}
-    touch(s); reloadLater(() => loadFloor(id), s);
+    touch(s); render(); if (s.demo) { expectAck(id, true); return; }
+    let ok = true;
+    try { if (what === "pw") await upd(tok, P.power, s.power); else await press(tok, isCool(s.mode) ? P.cool : P.heat); } catch (e) { ok = false; }
+    touch(s); expectAck(id, ok); reloadLater(() => loadFloor(id), s);
   }
   async function toggleLight(k) {
     const s = st.licht; s[k] = s[k] === 1 ? 0 : 1; touch(s); render(); if (s.demo) return;
@@ -386,6 +441,9 @@
       <rect x="10" y="8" width="14" height="24"/><path d="M10 8 3 5v30l7-3M24 8l7-3v30l-7-3"/>
       <path d="M12.5 14c2-1.5 3 1.5 4.5 0s2.5 1.5 4.5 0M12.5 20c2-1.5 3 1.5 4.5 0s2.5 1.5 4.5 0M12.5 26c2-1.5 3 1.5 4.5 0s2.5 1.5 4.5 0"/>
       ${open ? "" : `<path d="M2 38 32 2" stroke="var(--panel)" stroke-width="6"/><path d="M2 38 32 2"/>`}</svg>`;
+  const DROP = c => `<svg viewBox="0 0 24 24"><path d="M12 3c3.5 4.6 6 8 6 11a6 6 0 0 1-12 0c0-3 2.5-6.4 6-11z" fill="${c}"/></svg>`;
+  const AUTO = c => `<svg viewBox="0 0 24 24"><text x="12" y="18" text-anchor="middle" font-size="17" font-weight="800" fill="${c}" font-family="system-ui,sans-serif">A</text></svg>`;
+  const modeIcon = i => { const c = "currentColor"; return [AUTO(c), SNOW(c), DROP(c), FAN, FLAME(c)][i]; };
   const MUST = `<svg class="must" viewBox="0 0 12 38"><rect x="1.5" y="0" width="9" height="25" rx="4.5" fill="var(--bad)"/><circle cx="6" cy="32.5" r="5" fill="var(--bad)"/></svg>`;
   const FAN = `<svg viewBox="0 0 16 16"><g fill="currentColor"><circle cx="8" cy="3.2" r="3"/><circle cx="12.2" cy="10.4" r="3"/><circle cx="3.8" cy="10.4" r="3"/></g><circle cx="8" cy="8" r="2.2" fill="var(--fand)"/></svg>`;
   const PWR = c => `<svg viewBox="0 0 16 16" fill="none" stroke="${c}" stroke-width="2" stroke-linecap="round"><path d="M4.6 4.2a5.2 5.2 0 1 0 6.8 0"/><path d="M8 1.8v5.4"/></svg>`;
@@ -452,7 +510,11 @@
     const accD = !on ? "var(--wall)" : (cool ? "var(--coold)" : "var(--emberd)");
     const bgc = on ? (cool ? "var(--coolbg)" : "var(--heatbg)") : "var(--panel)";
     const v = vent(s), must = v && s.hum > 65;
-    const chip = !on ? "AUS" : (heat ? "HEIZEN" : (cool ? "KÜHLEN" : (esc(s.mode) || "–")));
+    const mi = MODES.indexOf(s.mode);
+    const chip = s.ackSt === 1 ? "sendet …" : s.ackSt === 2 ? "GESENDET" : s.ackSt === 3 ? "FEHLER"
+               : !on ? "AUS" : (heat ? "HEIZEN" : (cool ? "KÜHLEN" : (mi >= 0 ? MODES[mi].toUpperCase() : esc(s.mode) || "–")));
+    const sym = !s.ackSt && on;
+    const oacc = heat ? "var(--ember)" : (cool ? "var(--cool)" : "var(--ok)");
     const dIn = isNaN(s.hum) ? null : dew(s.temp, s.hum), dOut = wx.t == null ? null : dew(wx.t, wx.rh);
     return `<section class="page" data-acc="${acc}">
       <div class="dial" style="--accbg:${acc}">
@@ -461,7 +523,7 @@
         ${isNaN(s.set) ? "" : `<div class="dot" style="${dotPos(tSet)}"></div>`}
         <div class="in">
           <div class="name"><span class="st ${stCls(s.online)}"></span>${id === "oben" ? "Oben" : "Unten"}</div>
-          <button class="chip ${on ? "" : "aus"}" style="${on ? "background:" + acc : ""}" data-a="${id}:mode">${on && heat ? FLAME("#11161c") : ""}${on && cool ? SNOW("#11161c") : ""}${chip}</button>
+          <button class="chip ${s.ackSt === 2 ? "ok" : s.ackSt === 3 ? "bad" : (on ? "" : "aus")}" style="${on ? "background:" + acc : ""}" data-a="${id}:mode">${sym && heat ? FLAME("#11161c") : ""}${sym && cool ? SNOW("#11161c") : ""}${chip}</button>
           <div class="tl"><div class="temp">${fmt(s.temp)}<sup style="color:${acc}">°C</sup></div>${v == null ? "" : WIN(v, "var(--ok)")}${must ? MUST : ""}</div>
           <div class="sub"><span style="color:${acc}">Soll ${fmt(s.set)}°</span><span class="h">${fmt(s.hum)} %</span></div>
           <div class="fan"><button class="sb" data-f="${id}:-1">−</button>${FAN}<span>${esc(s.fan) || "–"}</span><button class="sb" data-f="${id}:1">+</button></div>
@@ -473,6 +535,9 @@
         </div>
       </div>
       <div class="cards">
+        <div class="card opts" style="--acc:${oacc}"><div class="l">Klimagerät · Modus und Optionen</div>
+          <div class="modes">${MODES.map((m, i) => `<button class="${(heat ? 4 : cool ? 1 : mi) === i ? "on" : ""}" data-m="${id}:${i}">${modeIcon(i)}${m}</button>`).join("")}</div>
+          <div class="tg">${OPTS.map((o, i) => `<button class="${optOn(s, i) ? "on" : ""}" data-o="${id}:${i}">${o[1]}</button>`).join("")}</div></div>
         <div class="card"><div class="l">Taupunkt innen</div><div class="v">${dIn == null ? "–" : fmt(Math.round(dIn * 10) / 10) + " °C"}</div></div>
         <div class="card"><div class="l">Außen${cfg.ort ? " · " + esc(cfg.ort) : ""}</div><div class="v">${wx.t == null ? "–" : fmt(wx.t) + " °C · " + Math.round(wx.rh) + " %"}</div></div>
         <div class="card wide">${v == null ? "" : WIN(v, "var(--ok)")}<div><div class="v" style="font-size:16px;color:${v ? (must ? "var(--bad)" : "var(--ok)") : "var(--muted)"}">${v == null ? "Standort in den Einstellungen eintragen" : (must ? "Jetzt unbedingt lüften" : (v ? "Lüften lohnt sich" : "Fenster besser zu lassen"))}</div>
@@ -514,6 +579,8 @@
     const a = e.target.closest("[data-a]"); if (a) { const [id, w] = a.dataset.a.split(":"); act(id, w); return; }
     const sb = e.target.closest("[data-s]"); if (sb) { const [id, d] = sb.dataset.s.split(":"); bump(id, "set", +d); return; }
     const f = e.target.closest("[data-f]"); if (f) { const [id, d] = f.dataset.f.split(":"); bump(id, "fan", +d); return; }
+    const m = e.target.closest("[data-m]"); if (m) { const [id, i] = m.dataset.m.split(":"); setMode(id, +i); return; }
+    const o = e.target.closest("[data-o]"); if (o) { const [id, i] = o.dataset.o.split(":"); toggleOpt(id, +i); return; }
     const l = e.target.closest("[data-l]"); if (l) toggleLight(l.dataset.l);
   });
 
