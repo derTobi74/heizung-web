@@ -133,7 +133,8 @@
   .opts .modes button { border: 1.5px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 12px; padding: 7px 0 5px; font: inherit; font-size: 11px; font-weight: 700; display: flex; flex-direction: column; align-items: center; gap: 3px; cursor: pointer; }
   .opts .modes button svg { width: 20px; height: 20px; }
   .opts .modes button.on { background: var(--acc); border-color: var(--acc); color: #11161c; }
-  .opts .tg { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+  .opts .tg { display: flex; justify-content: center; gap: 6px; }
+  .opts .tg button { min-width: 140px; }
   .opts .tg button { border: 1.5px solid var(--line); background: var(--bg); color: var(--muted); border-radius: 99px; padding: 7px 0; font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
   .opts .tg button.on { background: var(--acc); border-color: var(--acc); color: #11161c; }
   .chip.ok { background: var(--ok) !important; color: #11161c; box-shadow: none; }
@@ -254,16 +255,16 @@
   const STORE = "heizung-web-v1";
   const P = { temp: "V3", set: "V4", setDn: "V5", setUp: "V6", power: "V9", fan: "V10", fanDn: "V11", fanUp: "V12", cool: "V13", heat: "V14", mode: "V15", hum: "V17",
               mode5: "V20", ack: "V26", fanN: "V8" };
-  const FAN_LBL = ["Auto", "1", "2", "3", "Turbo"];      // V8: 0 Auto, 1..3, 4 Turbo – Beschriftung macht die App selbst
+  const FAN_LBL = ["Auto", "1", "2", "3", "4"];          // V8: 0 Auto, 1..4 wie auf der Fernbedienung – Beschriftung macht die App selbst
   // Klima_ESP 2.0: Modi (V20) und Optionen V21..V25 (Anzeige = V25 "Anzeige aus", daher umgekehrt)
   const MODES = ["Auto", "Kühlen", "Trocknen", "Lüften", "Heizen"];
-  const OPTS = [["V21", "Swing"], ["V22", "Turbo"], ["V23", "Leise"], ["V24", "Schlaf"], ["V25", "Anzeige", true]];
+  const OPTS = [["V21", "Swing"], ["V23", "Leise"]];      // Turbo/Schlaf/Anzeige wirkten am AR12 falsch und sind raus
   const optOn = (s, i) => OPTS[i][2] ? (s.opt || [])[i] !== 1 : (s.opt || [])[i] === 1;
   // [Schlüssel, Blynk-Pin, Name, Steckdose]
   const LIGHTS = [["k", "V0", "Küche"], ["m", "V3", "Mitte"], ["t", "V2", "Terasse"], ["s", "V4", "Schuppen", true], ["t2", "V5", "Terasse", true]];
   const GROUPS = [["Licht unten", ["k", "m", "t"]], ["Außen", ["s", "t2"]]];
-  const DEMO = { oben: { temp: 21, set: 23, power: 1, hum: 68, mode: "Heizen", fan: "2", fanN: 2, online: true, opt: [1, 0, 1, 0, 0], ack: 17 },
-                 unten: { temp: 22.5, set: 22, power: 1, hum: 38, mode: "Kühlen", fan: "1", fanN: 1, online: true, opt: [0, 1, 0, 0, 1], ack: 4711 } };
+  const DEMO = { oben: { temp: 21, set: 23, power: 1, hum: 68, mode: "Heizen", fan: "2", fanN: 2, online: true, opt: [1, 0], ack: 17 },
+                 unten: { temp: 22.5, set: 22, power: 1, hum: 38, mode: "Kühlen", fan: "1", fanN: 1, online: true, opt: [0, 1], ack: 4711 } };
   let cfg = { server: "fra1.blynk.cloud", oben: "", unten: "", licht: "", plz: "", ort: "", lat: null, lon: null, every: 10, design: location.hash === "#rund" ? "rnd" : "sq" };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem(STORE) || "{}") || {}); } catch (e) {}
   const save = () => { try { localStorage.setItem(STORE, JSON.stringify(cfg)); } catch (e) {} };
@@ -335,14 +336,9 @@
   }
   function setMode(id, i) { st[id].mode = MODES[i]; sendOpt(id, P.mode5, i); }
   function toggleOpt(id, i) {
-    const s = st[id]; s.opt = s.opt || [null, null, null, null, null];
+    const s = st[id]; s.opt = s.opt || OPTS.map(() => null);
     const want = !optOn(s, i), v = OPTS[i][2] ? (want ? 0 : 1) : (want ? 1 : 0);
-    s.opt[i] = v; if (want && i === 2) s.opt[1] = 0;
-    if (i === 1) {                                    // Turbo = Lüfterstufe 4; aus: zurück zur vorigen Stufe (wie der ESP)
-      if (want) { if (s.fanN != null && s.fanN < 4) s.fanPrev = s.fanN; s.fanN = 4; s.opt[2] = 0; }
-      else s.fanN = s.fanPrev ?? 0;
-      s.fan = FAN_LBL[s.fanN];
-    }   // Turbo und Leise schließen sich aus
+    s.opt[i] = v;
     sendOpt(id, OPTS[i][0], v);
   }
 
@@ -396,8 +392,7 @@
   function bump(id, kind, d) {
     const s = st[id];
     if (kind === "set" && !isNaN(s.set)) s.set += d;
-    if (kind === "fan") { const n = Math.max(0, Math.min(4, (s.fanN ?? 0) + d)); if (n === 4 && (s.fanN ?? 0) < 4) s.fanPrev = s.fanN ?? 0; s.fanN = n; s.fan = FAN_LBL[n];
-      s.opt = s.opt || [null, null, null, null, null]; s.opt[1] = s.fanN === 4 ? 1 : 0; if (s.fanN === 4) s.opt[2] = 0; }
+    if (kind === "fan") { s.fanN = Math.max(0, Math.min(4, (s.fanN ?? 0) + d)); s.fan = FAN_LBL[s.fanN]; }
     s.pend = s.pend || { set: 0, fan: 0 }; s.pend[kind] += d;
     touch(s); clearTimeout(s.pt); render();
     s.pt = setTimeout(async () => {
